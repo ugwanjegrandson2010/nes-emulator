@@ -6,6 +6,14 @@ Java (CPU, PPU, APU, cartridge mappers, save states).
 
 ![Nova the Squirrel running](artifacts/nova-f1200.png)
 
+## Install it without building anything
+
+Download the signed APK from the [Releases page](https://github.com/ugwanjegrandson2010/nes-emulator/releases/latest) —
+`MilliEmu-1.0.apk`, ~44 KB, Android 5.0+ — copy it to your phone, tap it, allow
+"install unknown apps" for your file manager, and open it. No JDK, SDK, Gradle or Android Studio
+required. The APK is signed with the key committed in `keystore/`, so future releases install
+over it as updates.
+
 ---
 
 ## First, the honest part: there is no "indie game emulator"
@@ -57,6 +65,16 @@ export ANDROID_HOME=/path/to/android-sdk
 ./gradlew assembleDebug          # -> app/build/outputs/apk/debug/app-debug.apk
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+A **signed, installable** release build (what the Releases page ships):
+
+```bash
+./gradlew assembleRelease        # -> app/build/outputs/apk/release/app-release.apk
+```
+
+Signing is configured from `keystore.properties` (committed on purpose, see the comment inside).
+If that file is absent the release APK is built unsigned, which Android will not install — use
+the debug build in that case.
 
 On the device: **Open ROM…**, pick a `.nes` file, play. The gamepad appears over the video;
 `Save` / `Load` write a state file next to the app's private data.
