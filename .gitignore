@@ -1,0 +1,17 @@
+# Build output
+build/
+*/build/
+.gradle/
+local.properties
+
+# Toolchain (never commit a JDK/SDK/Gradle distribution)
+gradle-8.7/
+tools/jdk*/
+android-sdk/
+
+# IDE
+.idea/
+*.iml
+
+# Debug artifacts
+*.hprof
