@@ -1,40 +1,52 @@
-# MilliEmu 1.0 — first signed APK
+# MilliEmu 1.1 — now two systems: NES + Game Boy
 
-The NES/Famicom core plus the Android host, packaged as a signed, installable APK. No build
-tools needed: download `MilliEmu-1.0.apk`, copy it to the phone, tap it, and allow
-"install unknown apps" for the app you tapped from.
+The hub gained its second core. MilliEmu is no longer a NES-only emulator: it now runs Game Boy
+(DMG) ROMs through a from-scratch LR35902 core, and the UI picks the core from the file
+extension. No build tools needed — download, tap, play.
 
 - **Package:** `emu.android` · **Android 5.0+ (API 21)** · no permissions, no network
-- **Size:** 43,890 bytes · **SHA-256:** `59876e07088d33d06384419805747308bea63012513ca67510bd9bb64f21ba5d`
-- **Signed:** v1 + v2 schemes, self-signed key `CN=MilliEmu` (the key is committed in `keystore/`)
+- **Size:** 58,897 bytes
+- **SHA-256:** `3bb84a636803e5537162058ba6f75f69d962e8adbf66a9a86676d2397703e586`
+- **Signed:** v1 + v2 schemes, self-signed key `CN=MilliEmu` (committed in `keystore/`)
 
-## What works
+## New in 1.1 — Game Boy core
 
-- Complete 6502 CPU (official + undocumented opcodes, exact cycle counts)
-- PPU: background, sprites, scrolling, NMI, sprite-0 hit and overflow
-- APU: 2× pulse, triangle, noise (no DMC)
-- Mappers 0 (NROM), 1 (MMC1), 2 (UxROM), 3 (CNROM), 4 (MMC3 + IRQ), 7 (AxROM)
-- iNES and NES 2.0 ROM loading, one save-state slot per game, reset
-- On-screen gamepad in landscape, 60 Hz pacing, AudioTrack output
-- ROM library with the system file picker, no storage permission
+| Area | Status |
+| --- | --- |
+| LR35902 CPU, all opcodes incl. CB prefix | Complete, hardware cycle counts, EI delay, HALT bug |
+| PPU: background, window, 8×8/8×16 sprites, 10-per-line, DMG priority | Complete |
+| APU: 2× pulse (with sweep), wave, noise, envelopes, frame sequencer | Complete |
+| Timer/DIV, joypad, serial, VBlank/STAT/LYC interrupts | Complete |
+| Cartridges | ROM-only, MBC1, MBC2, MBC3, MBC5 |
+| Save states | Full machine state, one slot per game |
 
-## Verified
+Supported files: `.nes`, `.gb`, and `.gbc` when the game is DMG-compatible. Game Boy Color
+exclusive games are rejected with a clear message instead of booting to garbage.
 
-29/29 checks pass in the headless suite: Klaus Dormann's 6502 functional test, `nestest`
-(8991/8991 instructions with exact cycles), blargg `instr_test-v5` (16/16), PPU
-background/scroll/sprite-0 tests, mapper banking, APU output, and a byte-identical save-state
-round trip. The APK itself builds and is signature-verified, but was not launched on physical
-hardware in this environment (no device or KVM available).
+The video is now letterboxed per core (4:3 for the NES, 10:9 for the Game Boy), and the on-screen
+gamepad is unchanged — the same eight buttons map to the Game Boy's D-pad, A, B, Start, Select.
+
+## Verification
+
+`38 passed, 0 failed` in the headless suite (29 NES + 9 Game Boy):
+
+- Game Boy **cpu_instrs**: all 11 sub-tests pass.
+- Game Boy **instr_timing**: instruction cycle counts match hardware.
+- Game Boy **halt_bug**: the HALT bug behaves like real hardware.
+- Game Boy **dmg-acid2**: Matt Currie's PPU conformance test, **23040/23040 pixels identical**
+  to the official reference image.
+- NES: Klaus Dormann's 6502 functional test, `nestest` (8991/8991 with exact cycles), blargg
+  `instr_test-v5` (16/16), PPU/mapper/APU checks and a byte-identical save-state round trip.
 
 ## Known limitations
 
-- NES only; other platforms need their own core.
-- PPU is scanline-accurate, not dot-accurate.
-- Mappers 5, 9, 10, 69, 71 etc. are unsupported and fall back to NROM (they will not boot).
-- No DMC channel, no rewind, no netplay, no turbo.
+- Game Boy is monochrome DMG only: no CGB colour palettes, no double-speed mode, no boot ROM
+  animation (registers start post-boot, as games expect).
+- blargg's `mem_timing` still fails its 3 sub-tests: instruction totals are exact, but the
+  individual bus accesses inside an instruction are not split across their exact T-cycles.
+- No link cable, no RTC, no battery-backed `.sav` files (cartridge RAM is kept in save states).
+- NES: no DMC channel, scanline-accurate PPU, mappers 0/1/2/3/4/7 only.
 
 ## Install note
 
-The release APK is signed with a different key than a locally built debug APK. If you installed
-`app-debug.apk` before, uninstall it first (`adb uninstall emu.android`), otherwise Android
-reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+This APK is signed with the same key as 1.0, so it installs straight over it as an update.

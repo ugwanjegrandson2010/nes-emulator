@@ -24,6 +24,11 @@ public interface EmulatorCore {
 
     int height();
 
+    /** Display aspect ratio (width / height) the host should letterbox to. */
+    default float aspectRatio() {
+        return width() / (float) height();
+    }
+
     /** ARGB pixels, width * height, refreshed by {@link #stepFrame()}. */
     int[] framebuffer();
 

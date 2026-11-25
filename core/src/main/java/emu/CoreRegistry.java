@@ -1,5 +1,6 @@
 package emu;
 
+import emu.gb.GbCore;
 import emu.nes.NesCore;
 
 import java.util.LinkedHashMap;
@@ -33,6 +34,18 @@ public final class CoreRegistry {
             @Override
             public EmulatorCore create() {
                 return new NesCore();
+            }
+        });
+        register("gb", "Game Boy", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new GbCore();
+            }
+        });
+        register("gbc", "Game Boy (DMG mode)", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new GbCore();
             }
         });
     }

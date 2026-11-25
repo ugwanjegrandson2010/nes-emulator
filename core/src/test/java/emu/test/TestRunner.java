@@ -1,5 +1,10 @@
 package emu.test;
 
+import emu.gb.GbApu;
+import emu.gb.GbCartridge;
+import emu.gb.GbCore;
+import emu.gb.GbMachine;
+import emu.gb.GbPpu;
 import emu.nes.Apu;
 import emu.nes.Cartridge;
 import emu.nes.Cpu6502;
@@ -9,6 +14,8 @@ import emu.nes.NesCore;
 import emu.nes.NesMachine;
 import emu.nes.Ppu;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -50,6 +57,14 @@ public final class TestRunner {
         mapperBanking();
         apuOutput();
         saveStateRoundTrip();
+
+        gbCpuInstructions();
+        gbInstructionTiming();
+        gbHaltBug();
+        gbPictureUnit();
+        gbMappers();
+        gbApuOutput();
+        gbSaveStateRoundTrip();
 
         long millis = System.currentTimeMillis() - start;
         System.out.println();
@@ -618,6 +633,151 @@ public final class TestRunner {
         }
         check("APU produces non-silent samples for an enabled pulse channel", total > 0 && nonZero,
                 "samples=" + total + " nonZero=" + nonZero);
+    }
+
+    // ------------------------------------------------------------------ Game Boy
+
+    private static final String[] GB_CPU_TESTS = {
+            "01-special", "02-interrupts", "03-op_sp,hl", "04-op_r,imm", "05-op_rp",
+            "06-ld_r,r", "07-jr,jp,call,ret,rst", "08-misc_instrs", "09-op_r,r",
+            "10-bit_ops", "11-op_a,(hl)"
+    };
+
+    /** Runs a Game Boy ROM and checks its final screen against a verified reference frame. */
+    private static int[] gbScreen(byte[] rom, int frames) throws IOException {
+        GbMachine machine = new GbMachine(GbCartridge.load(rom));
+        for (int i = 0; i < frames; i++) {
+            machine.stepFrame();
+        }
+        return machine.ppu.framebuffer.clone();
+    }
+
+    /** Number of pixels that differ; grayscale references use the DMG 0x00/0x55/0xAA/0xFF shades. */
+    private static int compareScreen(int[] actual, String expectedName, boolean grayscale) throws IOException {
+        BufferedImage expected = ImageIO.read(roms.resolve("gb/expected").resolve(expectedName).toFile());
+        if (expected == null) {
+            throw new IOException("missing reference image: " + expectedName);
+        }
+        int diffs = 0;
+        for (int y = 0; y < GbPpu.HEIGHT; y++) {
+            for (int x = 0; x < GbPpu.WIDTH; x++) {
+                int want = expected.getRGB(x, y);
+                if (grayscale) {
+                    int gray = want & 0xFF;
+                    int shade = gray <= 0x00 ? 3 : gray < 0x80 ? 2 : gray < 0xE0 ? 1 : 0;
+                    want = GbPpu.rgbFor(shade);
+                }
+                if ((want & 0xFFFFFF) != (actual[y * GbPpu.WIDTH + x] & 0xFFFFFF)) {
+                    diffs++;
+                }
+            }
+        }
+        return diffs;
+    }
+
+    private static void gbCpuInstructions() throws IOException {
+        int passedTests = 0;
+        StringBuilder failures = new StringBuilder();
+        for (String name : GB_CPU_TESTS) {
+            int[] screen = gbScreen(rom("gb/" + name + ".gb"), 400);
+            int diffs = compareScreen(screen, name + ".png", false);
+            if (diffs == 0) {
+                passedTests++;
+            } else {
+                failures.append(name).append(" diff=").append(diffs).append(" ");
+            }
+        }
+        check("Game Boy cpu_instrs: " + passedTests + "/" + GB_CPU_TESTS.length + " sub-tests render Passed",
+                passedTests == GB_CPU_TESTS.length, failures.toString());
+    }
+
+    private static void gbInstructionTiming() throws IOException {
+        int[] screen = gbScreen(rom("gb/instr_timing.gb"), 400);
+        int diffs = compareScreen(screen, "instr_timing.png", false);
+        check("Game Boy instr_timing: instruction cycle counts match hardware", diffs == 0, "diff=" + diffs);
+    }
+
+    private static void gbHaltBug() throws IOException {
+        int[] screen = gbScreen(rom("gb/halt_bug.gb"), 400);
+        int diffs = compareScreen(screen, "halt_bug.png", false);
+        check("Game Boy halt_bug: HALT with a pending interrupt repeats the next byte", diffs == 0, "diff=" + diffs);
+    }
+
+    private static void gbPictureUnit() throws IOException {
+        int[] screen = gbScreen(rom("gb/dmg-acid2.gb"), 200);
+        int diffs = compareScreen(screen, "dmg-acid2.png", true);
+        check("Game Boy PPU: dmg-acid2 matches the official reference image (" + (160 * 144 - diffs) + "/23040 px)",
+                diffs == 0, diffs + " pixels differ");
+    }
+
+    private static void gbMappers() throws IOException {
+        // four 16K banks, each stamped with its number, plus the header of a real MBC1 ROM
+        byte[] base = new byte[0x10000];
+        byte[] header = rom("gb/01-special.gb");
+        for (int bank = 0; bank < 4; bank++) {
+            Arrays.fill(base, bank * 0x4000, (bank + 1) * 0x4000, (byte) bank);
+        }
+        System.arraycopy(header, 0x100, base, 0x100, 0x50);
+        GbCartridge cart = GbCartridge.load(base);
+        cart.write(0x2000, 2);  // MBC1 ROM bank register
+        check("Game Boy MBC1 switches the $4000 window", (cart.read(0x4000) & 0xFF) == 2,
+                "read " + (cart.read(0x4000) & 0xFF));
+        check("Game Boy bank 0 stays at $0000", (cart.read(0x0000) & 0xFF) == 0,
+                "read " + (cart.read(0x0000) & 0xFF));
+        cart.write(0x2000, 0);  // writing 0 must select bank 1, never bank 0
+        check("Game Boy MBC1 maps bank 0 writes to bank 1", (cart.read(0x4000) & 0xFF) == 1,
+                "read " + (cart.read(0x4000) & 0xFF));
+    }
+
+    private static void gbApuOutput() {
+        GbApu apu = new GbApu();
+        apu.reset();
+        apu.setSampleRate(44100);
+        apu.writeRegister(0xFF26, 0x80);  // power on
+        apu.writeRegister(0xFF12, 0xF0);  // channel 1 volume 15, no envelope
+        apu.writeRegister(0xFF13, 0x00);
+        apu.writeRegister(0xFF14, 0x87);  // trigger, 131072 Hz-ish square
+        apu.writeRegister(0xFF24, 0x77);
+        apu.writeRegister(0xFF25, 0x11);
+        short[] buffer = new short[4096];
+        int total = 0;
+        boolean nonZero = false;
+        for (int i = 0; i < 200; i++) {
+            apu.tick(1000);
+            int n = apu.readAudio(buffer, 0, buffer.length);
+            total += n;
+            for (int s = 0; s < n; s++) {
+                if (buffer[s] != 0) {
+                    nonZero = true;
+                }
+            }
+        }
+        check("Game Boy APU produces non-silent samples for an enabled pulse channel",
+                total > 0 && nonZero, "samples=" + total);
+    }
+
+    private static void gbSaveStateRoundTrip() throws Exception {
+        GbCore core = new GbCore();
+        core.loadRom(rom("gb/01-special.gb"));
+        for (int i = 0; i < 40; i++) {
+            core.stepFrame();
+        }
+        byte[] state = core.saveState();
+
+        for (int i = 0; i < 30; i++) {
+            core.stepFrame();
+        }
+        byte[] expected = core.saveState();
+
+        core.loadState(state);
+        for (int i = 0; i < 30; i++) {
+            core.stepFrame();
+        }
+        byte[] replayed = core.saveState();
+
+        check("Game Boy save state round trip reproduces the exact machine state",
+                Arrays.equals(expected, replayed),
+                "state sizes " + expected.length + "/" + replayed.length);
     }
 
     private static void saveStateRoundTrip() throws Exception {

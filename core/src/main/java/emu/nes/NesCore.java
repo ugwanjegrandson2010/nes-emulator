@@ -68,6 +68,11 @@ public final class NesCore implements EmulatorCore {
     }
 
     @Override
+    public float aspectRatio() {
+        return 4f / 3f;  // NES output is a 4:3 television picture
+    }
+
+    @Override
     public int[] framebuffer() {
         return machine == null ? new int[0] : machine.ppu.framebuffer;
     }

@@ -285,9 +285,9 @@ public final class EmulatorView extends SurfaceView implements SurfaceHolder.Cal
         }
     }
 
-    /** NES output is 4:3 on a TV, so letterbox into a 4:3 box rather than stretching to 1:1. */
+    /** Letterbox to the core's aspect ratio (4:3 for the NES, 10:9 for the Game Boy). */
     private void computeDestination(int viewWidth, int viewHeight) {
-        float targetAspect = 4f / 3f;
+        float targetAspect = core.aspectRatio();
         int width = viewWidth;
         int height = Math.round(width / targetAspect);
         if (height > viewHeight) {
