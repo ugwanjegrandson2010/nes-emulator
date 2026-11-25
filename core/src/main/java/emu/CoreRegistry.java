@@ -1,6 +1,7 @@
 package emu;
 
 import emu.gb.GbCore;
+import emu.nds.NdsCore;
 import emu.nes.NesCore;
 
 import java.util.LinkedHashMap;
@@ -46,6 +47,12 @@ public final class CoreRegistry {
             @Override
             public EmulatorCore create() {
                 return new GbCore();
+            }
+        });
+        register("nds", "Nintendo DS", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new NdsCore();
             }
         });
     }

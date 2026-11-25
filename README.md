@@ -1,13 +1,13 @@
 # MilliEmu — a multi-system emulator for Android
 
 MilliEmu is an Android emulator **hub**: a shell that plays games through pluggable emulation
-cores, written in plain Java with no third-party code. It ships with two complete, from-scratch
-cores:
+cores, written in plain Java with no third-party code. It ships with three from-scratch cores:
 
 | Core | Systems | Files |
 | --- | --- | --- |
 | `nes` | NES / Famicom | `.nes` |
 | `gb` | Game Boy (DMG) | `.gb`, `.gbc` (DMG-compatible games) |
+| `nds` | Nintendo DS (2D, unencrypted ROMs) | `.nds` |
 
 ![Nova the Squirrel running](artifacts/nova-f1200.png)
 ![dmg-acid2 running on the Game Boy core](artifacts/gb-acid2.png)
@@ -15,7 +15,7 @@ cores:
 ## Install it without building anything
 
 Download the signed APK from the [Releases page](https://github.com/ugwanjegrandson2010/nes-emulator/releases/latest) —
-`MilliEmu-1.1.apk`, ~59 KB, Android 5.0+ — copy it to your phone, tap it, allow
+`MilliEmu-1.2.apk`, ~90 KB, Android 5.0+ — copy it to your phone, tap it, allow
 "install unknown apps" for your file manager, and open it. No JDK, SDK, Gradle or Android Studio
 required. The APK is signed with the key committed in `keystore/`, so future releases install
 over it as updates.
@@ -32,7 +32,8 @@ hardware targets are all different.
 What *does* exist, and what RetroArch, Lemuroid and Pizza Boy are built on, is exactly this
 project's shape: **one hub + one core per platform**. Games distributed as console ROMs (the
 overwhelming majority of classic-style indie/homebrew titles) run through the core for that
-console. This repo now has two of them, and the hub itself needed no changes to gain the second.
+console. This repo now has three of them, and the hub itself needed no changes to gain the
+second and third.
 
 ## What is implemented
 
@@ -59,8 +60,23 @@ console. This repo now has two of them, and the hub itself needed no changes to 
 | Cartridges | ROM-only, MBC1, MBC2, MBC3, MBC5 |
 | Save states | Full machine state, single slot per game |
 
-Both cores are plain Java 8 with zero dependencies, so the exact sources compile for Android and
-for the JVM test harness.
+### Nintendo DS core
+
+| Area | Status |
+| --- | --- |
+| ARM9 (ARMv5TE) + ARM7 (ARMv4T) instruction sets, ARM *and* Thumb, all condition codes, banked registers, exception entry/return | Complete |
+| Memory map: 4 MiB main RAM, shared/ARM7 WRAM, ITCM/DTCM, BIOS stubs, VRAM windows, palette, OAM | Complete |
+| Interrupts: IE/IME/IF, IRQ dispatch through the BIOS vector to the user handler at `0x03FFFFFC` | Complete |
+| IPC: sync register and both 16-word FIFOs (with the empty/full status bits homebrew polls) | Complete |
+| DMA (all 4 channels per core, immediate and VBlank start), timers (4 per core) | Complete |
+| Keypad input | Complete |
+| 2D engines (main + sub): text backgrounds 16/256 colour, affine backgrounds, OAM sprites (4/8bpp, flips, priority), 15-bit bitmap mode 5 | Complete |
+| BIOS calls used by homebrew: Div, CpuSet/CpuFastSet, BitUnPack, LZ77, Run-Length, Halt/VBlankIntrWait | Complete |
+| Save states | Full machine state, single slot per game |
+| 3D engine, sound hardware, commercial KEY1-encrypted ROMs, ARM7 firmware images | **Not implemented** (see limitations) |
+
+All three cores are plain Java 8 with zero dependencies, so the exact sources compile for Android
+and for the JVM test harness.
 
 ## Prerequisites
 
@@ -94,7 +110,7 @@ Signing is configured from `keystore.properties` (committed on purpose, see the 
 If that file is absent the release APK is built unsigned, which Android will not install — use
 the debug build in that case.
 
-On the device: **Open ROM…**, pick a `.nes`, `.gb` or `.gbc` file, play. The core is chosen from
+On the device: **Open ROM…**, pick a `.nes`, `.gb`, `.gbc` or `.nds` file, play. The core is chosen from
 the file extension; the gamepad appears over the video and `Save` / `Load` write a state file
 next to the app's private data.
 
@@ -113,7 +129,7 @@ java -cp build/classes:build/test-classes emu.test.TestRunner
 Result on this machine:
 
 ```
-38 passed, 0 failed  (5.0 s)
+74 passed, 0 failed  (4.7 s)
 ```
 
 **NES (29 checks)**
@@ -135,13 +151,39 @@ Result on this machine:
   official reference image: **23040/23040 pixels identical**.
 - **MBC1 banking**, **APU output** and a byte-identical **save-state** round trip.
 
+**Nintendo DS (26 checks)**
+
+There is no public conformance suite for the DS in the shape of `nestest`, so the DS checks run
+hand-assembled ARM and Thumb programs through the real decoder and assert their results, then boot
+complete DS ROM images (header, ARM9 and ARM7 programs, built inside the test) through the actual
+cartridge loader, memory map and both picture engines:
+
+- **ARM decoding**: data processing, all shifts, every flag (carry, zero, signed overflow),
+  conditional execution, MUL/MLA/UMULL, word/byte/halfword loads and stores with writeback,
+  LDM/STM, block-transfer writeback, MRS/MSR, BX, SWI dispatch, IRQ entry *and* exception return.
+- **Thumb decoding**: MOV/CMP/ADD/SUB immediate, LSL, conditional branches, BL, BX LR.
+- **Machine level**: cartridge header parsing, refusal of encrypted retail images, private
+  ARM9 DTCM vs shared main RAM, text background rendering through palette + tile map +
+  `DISPCNT`, the sub engine on the second screen, OAM sprites, mode 5 direct colour, the
+  ARM9→ARM7 IPC FIFO handshake, and a byte-identical save-state round trip.
+
+A third-party ROM is not committed, but the core boots **Rockwrestler**, a public NDS test ROM:
+it loads, runs its ARM9/ARM7 initialisation (stack setup, CP15, TCM, IPC reset), executes its
+CPU test suite for hundreds of millions of instructions and idles in its per-frame loop. It does
+not yet finish that ROM's full suite — see the limitations.
+
 Headless tools in `tools/` render frames to PNG without a phone:
 
 ```bash
 javac -cp build/classes -d /tmp tools/FrameDump.java tools/GbDump.java
 java -cp build/classes:/tmp FrameDump game.nes out.png 180
 java -cp build/classes:/tmp GbDump game.gb out.png 300
+javac -cp build/classes -d /tmp tools/NdsRun.java
+java -cp build/classes:/tmp NdsRun game.nds 120 out.png
 ```
+
+`NdsRun` also prints both CPUs' state, the instruction throughput and how much of the frame is
+non-black, which is how the Rockwrestler run above was measured.
 
 `tools/GbSuite.java` runs several Game Boy ROMs and tiles their final frames into one contact
 sheet (`artifacts/gb-suite.png` is that sheet for the test suite).
@@ -159,6 +201,12 @@ core/   plain Java 8, zero dependencies — this is the emulator
   emu/gb/GbCartridge.java   header parsing, MBC1/2/3/5 banking, cart RAM
   emu/gb/GbMachine.java     bus, timer/DIV, joypad, serial, interrupts, frame loop
   emu/gb/GbCore.java        EmulatorCore implementation + save states
+  emu/nds/NdsCpu.java       ARM9/ARM7: ARM + Thumb decoders, exceptions, CP15 hooks
+  emu/nds/NdsBus.java       memory map, BIOS IRQ trampoline, TCM, I/O translation
+  emu/nds/NdsPpu.java       two 2D engines: text/affine BGs, sprites, bitmap mode
+  emu/nds/NdsCartridge.java NDS header parsing, ROM image loading
+  emu/nds/NdsMachine.java   both CPUs, timers, DMA, IPC, interrupts, frame loop
+  emu/nds/NdsCore.java      EmulatorCore implementation + save states
 app/    Android app (plain Java, no AndroidX)
   MainActivity              ROM library
   EmulatorActivity          hosting, overlay controls, state files
@@ -171,7 +219,7 @@ two threads ever touch machine state. Frames are paced to 60 Hz, audio writes pr
 back-pressure that keeps sync, and the video is letterboxed to the core's aspect ratio (4:3 for
 the NES, 10:9 for the Game Boy).
 
-### Adding a third platform
+### Adding a fourth platform
 
 1. Write `MyCore implements EmulatorCore` (load, step one frame, framebuffer, audio, buttons,
    save state).
@@ -182,8 +230,8 @@ the NES, 10:9 for the Game Boy).
    });
    ```
 3. Nothing else changes: the library lists the new extension, the picker accepts it, and the
-   activity drives it through the same interface. This is exactly how the Game Boy was added —
-   no changes to the UI code beyond using the core's aspect ratio.
+   activity drives it through the same interface. This is exactly how the Game Boy and the
+   Nintendo DS were added — no changes to the UI code beyond using the core's aspect ratio.
 
 ## Known limitations (measured, not guessed)
 
@@ -210,6 +258,27 @@ the NES, 10:9 for the Game Boy).
   at their initial values.
 - **No battery saves**: cartridge RAM lives in memory and in save states, not in a `.sav` file.
 
+**Nintendo DS**
+
+- **2D only.** The 3D geometry/rasteriser engine is not implemented, so 3D-heavy games will not
+  draw their 3D layers (many homebrew and 2D games are unaffected).
+- **No sound.** The DS audio block (ARM7-driven, 16 channels) is not modelled; `readAudio`
+  returns silence rather than noise.
+- **Unencrypted ROMs only.** Retail cartridges store the start of the ARM9 program encrypted with
+  Nintendo's KEY1 stream cipher, which needs the Blowfish tables that are not in this repo. Such
+  images are detected and refused with a clear message instead of hanging. Homebrew `.nds` files
+  load normally.
+- **No BIOS firmware.** The parts of the firmware homebrew actually uses are emulated in place
+  (IRQ trampoline, the Div/CpuSet/LZ77/RL/BitUnPack SWIs, Halt/VBlankIntrWait), but anything that
+  probes the real BIOS will see stubs.
+- **VRAM is kept as the four default windows** rather than a full bank mapper, so unusual custom
+  bank layouts (main-engine OBJ in a non-default window, extended palettes) are not supported.
+- **Verified end to end against one public test ROM** (Rockwrestler boots and runs its init and
+  CPU suite, but does not finish its full suite). No commercial DS game has been run through this
+  core, and none can be without KEY1 decryption.
+- **Speed:** the JVM harness runs the DS at roughly 55–65 fps on one desktop core, so a mid-range
+  phone will be near or below full speed.
+
 **App**
 
 - **One save-state slot per game**, no rewind, no netplay, no turbo.
@@ -226,6 +295,8 @@ the NES, 10:9 for the Game Boy).
 - Game Boy: blargg's cpu_instrs (11 sub-tests), instr_timing and halt_bug, plus Matt Currie's
   dmg-acid2. `gb/expected/` holds the reference screens the suite compares against; the
   dmg-acid2 reference is the upstream `img/reference-dmg.png`.
+- Nintendo DS: nothing to commit — the DS ROMs used by the suite are built inside the test in
+  memory, so the DS checks need no third-party binaries at all.
 
 They are test fixtures, not playable games. The NES screenshot uses *Nova the Squirrel*, an
 open-source homebrew game that is not included in this repository.

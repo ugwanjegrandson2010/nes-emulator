@@ -74,7 +74,7 @@ public final class MainActivity extends Activity {
         root.addView(recentLabel);
 
         emptyHint = new TextView(this);
-        emptyHint.setText("No ROMs yet. Open a .nes file to start.\n\n"
+        emptyHint.setText("No ROMs yet. Open a .nes, .gb or .nds file to start.\n\n"
                 + "Everything runs locally: no network, no accounts.");
         emptyHint.setTextColor(0xFF9AA0A6);
         emptyHint.setTextSize(14);

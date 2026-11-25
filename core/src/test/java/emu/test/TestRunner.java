@@ -66,6 +66,13 @@ public final class TestRunner {
         gbApuOutput();
         gbSaveStateRoundTrip();
 
+        NdsTests.run(new NdsTests.Reporter() {
+            @Override
+            public void check(String name, boolean ok, String detail) {
+                TestRunner.check(name, ok, detail);
+            }
+        });
+
         long millis = System.currentTimeMillis() - start;
         System.out.println();
         System.out.println("=================================================");
