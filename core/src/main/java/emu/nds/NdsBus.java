@@ -50,8 +50,9 @@ public final class NdsBus implements NdsCpu.Bus {
         if ((offset & ~3) == 0x2C && irqHandlerAddress != 0) {
             return irqHandlerAddress;
         }
-        return (bios[offset] & 0xFF) | ((bios[offset + 1] & 0xFF) << 8)
-                | ((bios[offset + 2] & 0xFF) << 16) | ((bios[offset + 3] & 0xFF) << 24);
+        return (bios[offset & 0xFFF] & 0xFF) | ((bios[(offset + 1) & 0xFFF] & 0xFF) << 8)
+                | ((bios[(offset + 2) & 0xFFF] & 0xFF) << 16)
+                | ((bios[(offset + 3) & 0xFFF] & 0xFF) << 24);
     }
 
     // ------------------------------------------------------------------ memory

@@ -37,7 +37,22 @@ public final class NdsRun {
         }
         long start = System.currentTimeMillis();
         boolean trace = System.getenv("NDS_TRACE") != null;
+        // NDS_KEYS="20=1,30=0" holds buttons for given frames (1=A 2=B 4=Select 8=Start
+        // 16=Up 32=Down 64=Left 128=Right)
+        java.util.Map<Integer, Integer> keys = new java.util.HashMap<Integer, Integer>();
+        String keysEnv = System.getenv("NDS_KEYS");
+        if (keysEnv != null) {
+            for (String pair : keysEnv.split(",")) {
+                String[] parts = pair.split("=");
+                keys.put(Integer.parseInt(parts[0].trim()), Integer.parseInt(parts[1].trim(), 16));
+            }
+        }
+        int buttonMask = 0;
         for (int i = 0; i < frames; i++) {
+            if (keys.containsKey(i)) {
+                buttonMask = keys.get(i);
+                core.setButtons(0, buttonMask);
+            }
             core.stepFrame();
             if (trace && (i < 24 || i % 50 == 0)) {
                 NdsCpu c9 = core.machine().cpu9;

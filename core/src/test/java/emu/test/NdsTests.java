@@ -294,8 +294,9 @@ public final class NdsTests {
         return 0xE8800000 | (1 << 21) | (rn << 16) | list;
     }
 
+    /** SWI with the BIOS call number in bits 16-23, where the hardware reads it. */
     private static int swiCall(int comment) {
-        return 0xEF000000 | comment;
+        return 0xEF000000 | ((comment & 0xFF) << 16);
     }
 
     /** SUBS PC, LR, #4: the standard return from an exception handler. */
@@ -778,16 +779,17 @@ public final class NdsTests {
 
     private static void dsIpcFifo(Reporter reporter) throws Exception {
         Asm arm9 = new Asm();
-        arm9.load(0, 0x04000000);
-        arm9.w(mov(1, 0x8000), strh(1, 0, 0x184));            // enable the FIFO
+        arm9.load(0, 0x04000184);
+        arm9.w(mov(1, 0x8000), strh(1, 0, 0));                // enable the FIFO
         arm9.load(1, 0xC0DE);
-        arm9.w(str(1, 0, 0x188));             // send one word
+        arm9.load(0, 0x04000188);
+        arm9.w(str(1, 0, 0));                 // send one word
         arm9.b(".loop");
         arm9.label(".loop").w(0xEAFFFFFE);
 
         Asm arm7 = new Asm();
-        arm7.load(0, 0x04000000);
-        arm7.w(mov(1, 0x8000), strh(1, 0, 0x184));
+        arm7.load(0, 0x04000184);
+        arm7.w(mov(1, 0x8000), strh(1, 0, 0));
         arm7.load(2, 0x04100000);
         arm7.label(".poll");
         arm7.w(ldr(3, 2, 0));                                 // receive a word

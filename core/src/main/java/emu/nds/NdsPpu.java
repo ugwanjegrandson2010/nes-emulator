@@ -42,7 +42,8 @@ public final class NdsPpu {
         }
 
         public int dispcnt() {
-            return reg[0] & 0xFFFF;
+            // DISPCNT is a 32-bit register: bits 16-17 select the display mode
+            return read32(0);
         }
 
         public int bgcnt(int index) {
@@ -157,6 +158,19 @@ public final class NdsPpu {
         if ((dispcnt & 0x0080) != 0) {
             return;
         }
+        int displayMode = (dispcnt >> 16) & 3;
+        if (displayMode == 2) {
+            // "VRAM display": the screen is a 256x192 16bpp bitmap at the start of LCDC VRAM.
+            // Homebrew that needs no tile engine at all (rockwrestler's menu, for example) uses it.
+            renderVramDisplay(engine, bgVram);
+            return;
+        }
+        if (displayMode == 3) {
+            // "Main memory display": same layout, but taken from the main engine's bitmap base.
+            int base = ((dispcnt >> 18) & 3) * 0x20000;
+            renderMemoryDisplay(engine, bgVram, base);
+            return;
+        }
         int mode = dispcnt & 7;
         int[] priority = new int[WIDTH * HEIGHT];
         java.util.Arrays.fill(priority, 0xFF);
@@ -180,6 +194,29 @@ public final class NdsPpu {
         if ((dispcnt & 0x1000) != 0) {
             renderSprites(engine, objVram, oam, objPaletteBase, priority);
         }
+    }
+
+    private void renderVramDisplay(Engine engine, byte[] vram) {
+        for (int i = 0; i < WIDTH * HEIGHT; i++) {
+            int offset = i * 2;
+            int color = (vram[offset] & 0xFF) | ((vram[offset + 1] & 0xFF) << 8);
+            engine.pixels[i] = toArgb(color);
+        }
+    }
+
+    private void renderMemoryDisplay(Engine engine, byte[] vram, int base) {
+        for (int i = 0; i < WIDTH * HEIGHT; i++) {
+            int offset = (base + i * 2) & (vram.length - 1);
+            int color = (vram[offset] & 0xFF) | ((vram[offset + 1] & 0xFF) << 8);
+            engine.pixels[i] = toArgb(color);
+        }
+    }
+
+    private static int toArgb(int color15) {
+        int red = color15 & 0x1F;
+        int green = (color15 >> 5) & 0x1F;
+        int blue = (color15 >> 10) & 0x1F;
+        return 0xFF000000 | (red << 19) | (green << 11) | (blue << 3);
     }
 
     private void renderTextBg(Engine engine, byte[] vram, int paletteBase, int bg, int[] priority) {

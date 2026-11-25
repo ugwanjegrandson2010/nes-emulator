@@ -1,8 +1,10 @@
 package emu;
 
 import emu.gb.GbCore;
+import emu.gba.GbaCore;
 import emu.nds.NdsCore;
 import emu.nes.NesCore;
+import emu.snes.SnesCore;
 
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -47,6 +49,24 @@ public final class CoreRegistry {
             @Override
             public EmulatorCore create() {
                 return new GbCore();
+            }
+        });
+        register("gba", "Game Boy Advance", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new GbaCore();
+            }
+        });
+        register("sfc", "Super Nintendo", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new SnesCore();
+            }
+        });
+        register("smc", "Super Nintendo", new Factory() {
+            @Override
+            public EmulatorCore create() {
+                return new SnesCore();
             }
         });
         register("nds", "Nintendo DS", new Factory() {

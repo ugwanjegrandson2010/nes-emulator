@@ -1,13 +1,15 @@
 # MilliEmu — a multi-system emulator for Android
 
 MilliEmu is an Android emulator **hub**: a shell that plays games through pluggable emulation
-cores, written in plain Java with no third-party code. It ships with three from-scratch cores:
+cores, written in plain Java with no third-party code. It ships with five from-scratch cores:
 
 | Core | Systems | Files |
 | --- | --- | --- |
 | `nes` | NES / Famicom | `.nes` |
 | `gb` | Game Boy (DMG) | `.gb`, `.gbc` (DMG-compatible games) |
+| `gba` | Game Boy Advance | `.gba` |
 | `nds` | Nintendo DS (2D, unencrypted ROMs) | `.nds` |
+| `sfc` | Super Nintendo | `.sfc`, `.smc` |
 
 ![Nova the Squirrel running](artifacts/nova-f1200.png)
 ![dmg-acid2 running on the Game Boy core](artifacts/gb-acid2.png)
@@ -15,7 +17,7 @@ cores, written in plain Java with no third-party code. It ships with three from-
 ## Install it without building anything
 
 Download the signed APK from the [Releases page](https://github.com/ugwanjegrandson2010/nes-emulator/releases/latest) —
-`MilliEmu-1.2.apk`, ~90 KB, Android 5.0+ — copy it to your phone, tap it, allow
+`MilliEmu-1.3.apk`, ~190 KB, Android 5.0+ — copy it to your phone, tap it, allow
 "install unknown apps" for your file manager, and open it. No JDK, SDK, Gradle or Android Studio
 required. The APK is signed with the key committed in `keystore/`, so future releases install
 over it as updates.
@@ -32,7 +34,7 @@ hardware targets are all different.
 What *does* exist, and what RetroArch, Lemuroid and Pizza Boy are built on, is exactly this
 project's shape: **one hub + one core per platform**. Games distributed as console ROMs (the
 overwhelming majority of classic-style indie/homebrew titles) run through the core for that
-console. This repo now has three of them, and the hub itself needed no changes to gain the
+console. This repo now has five of them, and the hub itself needed no changes to gain the
 second and third.
 
 ## What is implemented
@@ -75,7 +77,61 @@ second and third.
 | Save states | Full machine state, single slot per game |
 | 3D engine, sound hardware, commercial KEY1-encrypted ROMs, ARM7 firmware images | **Not implemented** (see limitations) |
 
-All three cores are plain Java 8 with zero dependencies, so the exact sources compile for Android
+
+### Game Boy Advance core
+
+| Area | Status |
+| --- | --- |
+| ARM7TDMI (shared with the DS core): ARM *and* Thumb, all condition codes, RRX/ROR #0, PC quirks | Complete |
+| BIOS-free boot state (stacks, System/IRQ/Supervisor modes at `0x08000000`) | Complete |
+| PPU: modes 0-5 (text, affine, bitmap with 15-bit direct colour), 4 backgrounds, 128 sprites, mosaic, windows/alpha ignored | Complete |
+| DMA: all four channels, immediate and HBlank/VBlank start, ROM → VRAM copies | Complete |
+| Timers, keypad IRQ, VBlank/HBlank/VCount IRQs, IME/IE/IF | Complete |
+| BIOS calls: Div, DivArm, Sqrt, ArcTan/ArcTan2, CpuSet, CpuFastSet, BgAffineSet, ObjAffineSet, BitUnPack, LZ77, Run-Length, Halt, IntrWait | Complete |
+| Save states | Full machine state, single slot per game |
+| Sound (4 PSG channels + DMA sound) | **Silent** (see limitations) |
+
+The ARM core itself is exercised by `jsmolka/gba-tests`: `arm.gba` runs through the conditions,
+branch, flag, shift and data-processing suites (200+ numbered checks) and draws its results
+through the GBA PPU; `shades.gba` renders its gradient through bitmap mode 3.
+
+### Super Nintendo core
+
+| Area | Status |
+| --- | --- |
+| 65C816 interpreter: full opcode map, 8/16-bit accumulator and index modes, decimal mode, block moves | Complete |
+| LoROM + HiROM mapping, 128 KiB WRAM, SRAM, header detection | Complete |
+| PPU: background modes 0-7 (2/4/8 bpp, per-tile priority, flips, 32x32-64x64 maps), 128 sprites, 15-bit colour, brightness/fade, Mode 7 affine | Complete |
+| DMA: all 8 channels and the 8 HDMA channels (table-driven per-scanline register writes) | Complete |
+| NMI/VBlank, VCount IRQ, joypad auto-read, timers | Complete |
+| Save states | Full machine state, single slot per game |
+| S-SMP audio CPU, windows, colour maths, interlace | **Not implemented** (see limitations) |
+
+The core is verified with a hand-written test ROM built into a script (`tools/make-snes-test.py` is
+not shipped; the ROM is generated in a few lines of Python) that sets a palette, uploads two tiles,
+fills a map and enables BG1 — the core renders exactly the expected 50 % white stripe pattern,
+which proves the CPU → VRAM → PPU → framebuffer path. Public PeterLemon demos boot and run too,
+though their text screens are not pixel-exact.
+
+### Cores that could be added next
+
+The hub only needs one new `EmulatorCore` per system; nothing in the UI changes. In rough order of
+effort versus payoff for a Java, dependency-free codebase:
+
+| System | What it needs |
+| --- | --- |
+| Sega Master System / Game Gear | Z80 + VDP — small, would share a CPU with the GB-style line renderer |
+| Sega Genesis / Mega Drive | 68000 + Z80 + VDP; the 68000 is the big piece |
+| PC Engine / TurboGrafx-16 | 65C02 (already have 6502) + HuC6270 VDP |
+| Neo Geo Pocket (Colour) | TLCS-900H + K2GE |
+| WonderSwan | V30MZ (8086-like) + custom LCD |
+| Atari 2600 / 7800 | 6507/6502 (have it) + TIA/MARIA; tiny ROMs make it a good next step |
+| Game Boy Color (full) | Extend the existing GB core: CGB palettes, double speed, HDMA |
+| Commodore 64 | 6510 + VIC-II + SID (audio is the hard part) |
+| PlayStation | MIPS R3000 + GTE + CD-ROM; a different order of magnitude, not planned |
+| Nintendo 64 | MIPS R4300i + RSP/RDP microcode; the largest project on this list |
+
+All five cores are plain Java 8 with zero dependencies, so the exact sources compile for Android
 and for the JVM test harness.
 
 ## Prerequisites
@@ -110,7 +166,7 @@ Signing is configured from `keystore.properties` (committed on purpose, see the 
 If that file is absent the release APK is built unsigned, which Android will not install — use
 the debug build in that case.
 
-On the device: **Open ROM…**, pick a `.nes`, `.gb`, `.gbc` or `.nds` file, play. The core is chosen from
+On the device: **Open ROM…**, pick a `.nes`, `.gb`, `.gbc`, `.gba`, `.nds`, `.sfc` or `.smc` file, play. The core is chosen from
 the file extension; the gamepad appears over the video and `Save` / `Load` write a state file
 next to the app's private data.
 
@@ -207,8 +263,16 @@ core/   plain Java 8, zero dependencies — this is the emulator
   emu/nds/NdsCartridge.java NDS header parsing, ROM image loading
   emu/nds/NdsMachine.java   both CPUs, timers, DMA, IPC, interrupts, frame loop
   emu/nds/NdsCore.java      EmulatorCore implementation + save states
+  emu/gba/GbaMachine.java   ARM7TDMI bus, IO, timers, DMA, BIOS HLE, frame loop
+  emu/gba/GbaPpu.java       modes 0-5, 4 backgrounds, 128 sprites, bitmap modes
+  emu/gba/GbaCore.java      EmulatorCore implementation + save states
+  emu/snes/SnesCpu.java     65C816: full opcode map, 8/16-bit modes, decimal mode
+  emu/snes/SnesPpu.java     background modes 0-7, sprites, Mode 7, brightness
+  emu/snes/SnesMachine.java LoROM/HiROM bus, DMA/HDMA, timers, joypad, frame loop
+  emu/snes/SnesCore.java    EmulatorCore implementation + save states
 app/    Android app (plain Java, no AndroidX)
-  MainActivity              ROM library
+  Ui.java                   shared colours, gradients and card styling
+  MainActivity              coloured ROM library with per-system accent cards
   EmulatorActivity          hosting, overlay controls, state files
   EmulatorView              SurfaceView renderer + touch gamepad + frame thread
   AudioOutput               AudioTrack streaming
@@ -279,6 +343,28 @@ the NES, 10:9 for the Game Boy).
 - **Speed:** the JVM harness runs the DS at roughly 55–65 fps on one desktop core, so a mid-range
   phone will be near or below full speed.
 
+**Game Boy Advance**
+
+- **No sound.** The four PSG channels and the DMA sound FIFOs are not modelled; `readAudio`
+  returns silence.
+- **Affine backgrounds ignore per-scanline matrix changes**, and window effects / alpha blending
+  are not applied — sprites and backgrounds draw in plain priority order.
+- **No BIOS.** The handful of BIOS calls games actually use are emulated in place (Div, Sqrt,
+  ArcTan, CpuSet, LZ77, RL, BitUnPack, Halt, IntrWait); anything that calls other SWIs gets a
+  return, not the real routine.
+- **Verified with `jsmolka/gba-tests`**, not with commercial cartridges.
+
+**Super Nintendo**
+
+- **No sound.** The S-SMP audio CPU is not emulated at all, so `readAudio` returns silence.
+- **Windows, colour maths (add/sub/half), interlace and offset-per-tile are not applied.** The
+  background and sprite layers themselves, Mode 7 and HDMA are.
+- **Mode 5/6 are drawn at 256 pixels wide** rather than 512 (hi-res), and Mode 7 uses a simplified
+  character layout.
+- **Timing is per-scanline**, not cycle-exact, so raster tricks that depend on exact dot timing
+  will differ.
+- **Verified with hand-written and public demo ROMs**, not with commercial cartridges.
+
 **App**
 
 - **One save-state slot per game**, no rewind, no netplay, no turbo.
@@ -295,6 +381,10 @@ the NES, 10:9 for the Game Boy).
 - Game Boy: blargg's cpu_instrs (11 sub-tests), instr_timing and halt_bug, plus Matt Currie's
   dmg-acid2. `gb/expected/` holds the reference screens the suite compares against; the
   dmg-acid2 reference is the upstream `img/reference-dmg.png`.
+- Game Boy Advance: none committed — `jsmolka/gba-tests` ROMs are downloaded into `/tmp` when
+  running the headless tools.
+- Super Nintendo: none committed — the PPU check uses a ROM generated on the fly by a short
+  Python script, and the PeterLemon demos are downloaded when needed.
 - Nintendo DS: nothing to commit — the DS ROMs used by the suite are built inside the test in
   memory, so the DS checks need no third-party binaries at all.
 

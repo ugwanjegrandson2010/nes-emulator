@@ -231,7 +231,54 @@ public final class NdsCpu {
             return 3;
         }
         instructionCount++;
-        return thumb() ? stepThumb() : stepArm();
+        if (TRACE_LAST) {
+            lastPc[lastIndex] = r[15];
+            lastInsn[lastIndex] = thumb() ? bus.read16(r[15]) : bus.read32(r[15]);
+            lastSp[lastIndex] = r[13];
+            lastCpsr[lastIndex] = cpsr;
+            lastIndex = (lastIndex + 1) % lastPc.length;
+        }
+        int cycles = thumb() ? stepThumb() : stepArm();
+        checkCrash();
+        return cycles;
+    }
+
+    private final int[] lastPc = new int[48];
+    private final int[] lastInsn = new int[48];
+    private final int[] lastSp = new int[48];
+    private final int[] lastCpsr = new int[48];
+    private int lastIndex;
+    private static final boolean TRACE_LAST = System.getenv("NDS_LAST") != null;
+    private boolean traceCrashed;
+
+    /** Debug aid: report the instruction window that led into unmapped memory. */
+    private void checkCrash() {
+        if (!TRACE_LAST || traceCrashed) {
+            return;
+        }
+        int pc = r[15];
+        boolean bad = (pc >= 0x1000 && pc < 0x02000000) || pc >= 0x0E000000
+                || (!arm9 && pc >= 0x03810000 && pc < 0x04000000);
+        if (!bad && pc < 0x1000 && pc != 0x18 && (pc < 0x18 || pc >= 0x30) && bus.read32(pc & ~3) == 0) {
+            bad = true;
+        }
+        if (bad) {
+            traceCrashed = true;
+            dumpLast(arm9 ? "arm9" : "arm7");
+        }
+    }
+
+    public void dumpLast(String label) {
+        System.err.println("--- last instructions for " + label + " pc=" + Integer.toHexString(r[15]));
+        for (int i = 0; i < lastPc.length; i++) {
+            int at = (lastIndex + i) % lastPc.length;
+            if (lastPc[at] == 0) {
+                continue;
+            }
+            System.err.println("  " + Integer.toHexString(lastPc[at]) + "  " + Integer.toHexString(lastInsn[at])
+                    + "  sp=" + Integer.toHexString(lastSp[at])
+                    + "  cpsr=" + Integer.toHexString(lastCpsr[at]));
+        }
     }
 
     private int stepArm() {
@@ -244,39 +291,49 @@ public final class NdsCpu {
             return 1;
         }
         int cycles = 1;
-        switch ((insn >>> 25) & 7) {
+        // Bits 27-26 select the group. Bit 25 must not be part of the switch: a load/store with a
+        // register offset has bit 25 set and would otherwise fall into the coprocessor group.
+        switch ((insn >>> 26) & 3) {
             case 0:
-                cycles = armMisc(insn);
-                break;
-            case 1:
-                cycles = armDataProcessing(insn, true);
-                break;
-            case 2:
-                cycles = armSingleTransfer(insn);
-                break;
-            case 3:
-                if ((insn & 0x90) == 0x90) {
-                    cycles = armHalfTransfer(insn);
+                // MRS/MSR share this group with data processing, and MSR with an immediate operand
+                // also has bit 25 set, so they have to be recognised before that split.
+                if (isPsrTransfer(insn)) {
+                    cycles = armPsrTransfer(insn);
+                } else if ((insn & 0x02000000) != 0) {
+                    cycles = armDataProcessing(insn, true);
+                } else {
+                    cycles = armMisc(insn);
                 }
                 break;
-            case 4:
-                cycles = armBlockTransfer(insn);
+            case 1:
+                cycles = armSingleTransfer(insn);
                 break;
-            case 5:
-                cycles = armBranch(insn, pc);
+            case 2:
+                // bit 25 separates B/BL (101) from LDM/STM (100)
+                if ((insn & 0x02000000) != 0) {
+                    cycles = armBranch(insn, pc);
+                } else {
+                    cycles = armBlockTransfer(insn);
+                }
                 break;
-            case 7:
+            default:
                 if ((insn & 0x0F000000) == 0x0F000000) {
-                    bus.swi(this, insn & 0xFF);
+                    // ARM SWI puts its number in bits 16-23 (Thumb uses bits 0-7)
+                    bus.swi(this, (insn >>> 16) & 0xFF);
                     cycles = 3;
                 } else {
                     armCoprocessor(insn);
                 }
                 break;
-            default:
-                break;
         }
+        checkCrash();
         return cycles;
+    }
+
+    private boolean isPsrTransfer(int insn) {
+        return (insn & 0x0FBF0FFF) == 0x010F0000       // MRS
+                || (insn & 0x0FB0FFF0) == 0x0120F000   // MSR (register)
+                || (insn & 0x0FB0F000) == 0x0320F000;  // MSR (immediate)
     }
 
     private boolean condition(int code) {
@@ -310,10 +367,12 @@ public final class NdsCpu {
         switch (type) {
             case 0:  // LSL
                 if (amount == 0) {
+                    shifterCarry = flag(FLAG_C);   // no shift: carry passes through unchanged
                     return value;
                 }
                 if (amount < 32) {
-                    shifterCarry = ((value << (32 - amount)) & 0x80000000) != 0;
+                    // the bit that falls out of the top is bit (32 - amount) of the input
+                    shifterCarry = ((value >>> (32 - amount)) & 1) != 0;
                     return value << amount;
                 }
                 shifterCarry = amount == 32 ? (value & 1) != 0 : false;
@@ -323,6 +382,7 @@ public final class NdsCpu {
                     amount = 32;
                 }
                 if (amount == 0) {
+                    shifterCarry = flag(FLAG_C);
                     return value;
                 }
                 if (amount < 32) {
@@ -336,6 +396,7 @@ public final class NdsCpu {
                     amount = 32;
                 }
                 if (amount == 0) {
+                    shifterCarry = flag(FLAG_C);
                     return value;
                 }
                 if (amount < 32) {
@@ -346,10 +407,13 @@ public final class NdsCpu {
                 return value < 0 ? -1 : 0;
             default:  // ROR
                 if (amount == 0 && !byRegister) {
+                    // ROR #0 is RRX: the old carry goes in at bit 31
+                    int resultRrx = (value >>> 1) | (carryBit() << 31);
                     shifterCarry = (value & 1) != 0;
-                    return (value >>> 1) | (value << 31);
+                    return resultRrx;
                 }
                 if (amount == 0) {
+                    shifterCarry = flag(FLAG_C);
                     return value;
                 }
                 int rot = amount & 31;
@@ -367,6 +431,7 @@ public final class NdsCpu {
         if (byRegister) {
             int shiftAmount = readReg((insn >>> 8) & 0xF) & 0xFF;
             if (shiftAmount == 0) {
+                shifterCarry = flag(FLAG_C);   // shift by register 0 leaves the carry alone
                 return value;
             }
             return shift(type, value, shiftAmount, true);
@@ -403,15 +468,25 @@ public final class NdsCpu {
             int value = insn & 0xFF;
             if (rotate == 0) {
                 operand2 = value;
+                shifterCarry = flag(FLAG_C);   // unrotated immediate: carry unchanged
             } else {
                 operand2 = Integer.rotateRight(value, rotate);
                 shifterCarry = (operand2 & 0x80000000) != 0;
             }
         } else {
-            operand2 = shiftOperand(insn, readReg(insn & 0xF), (insn >>> 5) & 3, (insn >>> 7) & 0x1F,
+            int rmIndex = insn & 0xF;
+            int rmValue;
+            if (rmIndex == 15 && (insn & 0x10) != 0) {
+                // ARM7TDMI: PC reads as PC+12 when the shift amount comes from a register
+                rmValue = r[15] + 8;
+            } else {
+                rmValue = readReg(rmIndex);
+            }
+            operand2 = shiftOperand(insn, rmValue, (insn >>> 5) & 3, (insn >>> 7) & 0x1F,
                     (insn & 0x10) != 0);
         }
-        int a = readReg(rn);
+        boolean registerShift = !immediate && (insn & 0x10) != 0;
+        int a = (rn == 15 && registerShift) ? r[15] + 8 : readReg(rn);
         int result;
         boolean carry = flag(FLAG_C);
         boolean overflow = flag(FLAG_V);
@@ -573,7 +648,7 @@ public final class NdsCpu {
         if ((insn & 0x0E000090) == 0x00000090) {
             return armHalfTransfer(insn);
         }
-        return armDataProcessing(insn, false);
+        return armDataProcessing(insn, (insn & 0x02000000) != 0);
     }
 
     private int armHalfwordMultiply(int insn) {

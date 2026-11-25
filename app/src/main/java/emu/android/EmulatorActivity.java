@@ -73,6 +73,7 @@ public final class EmulatorActivity extends Activity implements EmulatorView.Lis
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setPadding(dp(6), dp(6), dp(6), dp(6));
+        bar.setBackground(Ui.roundedGradient(0xCC120C24, 0xCC0A0714, dp(20)));
         bar.addView(chip("Pause", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -113,7 +114,7 @@ public final class EmulatorActivity extends Activity implements EmulatorView.Lis
 
         status = new TextView(this);
         status.setText(core.name() + "  ·  " + romFile.getName());
-        status.setTextColor(0xB3FFFFFF);
+        status.setTextColor(0xFFCFC2F5);
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         status.setPadding(dp(10), dp(8), dp(10), dp(8));
         bar.addView(status, new LinearLayout.LayoutParams(0,
@@ -203,11 +204,11 @@ public final class EmulatorActivity extends Activity implements EmulatorView.Lis
     private TextView chip(String label, View.OnClickListener click) {
         TextView chip = new TextView(this);
         chip.setText(label);
-        chip.setTextColor(0xF2FFFFFF);
+        chip.setTextColor(0xFFEDE7FF);
         chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         chip.setGravity(Gravity.CENTER);
         chip.setPadding(dp(12), dp(7), dp(12), dp(7));
-        chip.setBackgroundColor(0x661A1A1F);
+        chip.setBackground(Ui.roundedOutline(0xB3231A3C, dp(18), 0x66B79BFF, dp(1)));
         chip.setOnClickListener(click);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);

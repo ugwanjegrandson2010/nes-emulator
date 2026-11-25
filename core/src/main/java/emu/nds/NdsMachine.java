@@ -36,8 +36,14 @@ public final class NdsMachine {
     private int ie7;
     private int ime7;
     private int keyInput = 0x03FF;
-    private int ipcSync;
-    private int ipcFifoControl;
+    private int ipcSync9;        // last value the ARM9 wrote to IPCSYNC
+    private int ipcSync7;        // last value the ARM7 wrote to IPCSYNC
+    private int fifoCnt9;        // IPCFIFOCNT as the ARM9 sees it
+    private int fifoCnt7;        // IPCFIFOCNT as the ARM7 sees it
+    private int fifoError9;      // read-from-empty error latches (bit 14)
+    private int fifoError7;
+    private int lastRecv9;       // last word the ARM9 read from its FIFO
+    private int lastRecv7;
 
     private final int[] fifoIn9 = new int[16];   // words queued for the ARM9
     private final int[] fifoIn7 = new int[16];   // words queued for the ARM7
@@ -87,8 +93,14 @@ public final class NdsMachine {
         ie7 = 0;
         ime7 = 0;
         keyInput = 0x03FF;
-        ipcSync = 0;
-        ipcFifoControl = 0;
+        ipcSync9 = 0;
+        ipcSync7 = 0;
+        fifoCnt9 = 0;
+        fifoCnt7 = 0;
+        fifoError9 = 0;
+        fifoError7 = 0;
+        lastRecv9 = 0;
+        lastRecv7 = 0;
         frameCount = 0;
         vblankFlag = false;
         pendingRender = false;
@@ -149,13 +161,13 @@ public final class NdsMachine {
         }
         startDma(0, 1);
         startDma(1, 1);
-        startIpcSync();
         ppu.render();
     }
 
-    private void startIpcSync() {
-        // both cores see bit 13 of IPCSYNC as the "remote core has sent something" handshake
-        if ((ipcSync & 0x2000) != 0) {
+    /** Writing bit 13 raises IPCSYNC IRQs on the other core, which must have armed bit 14. */
+    private void raiseIpcSyncIrq(boolean fromArm9) {
+        int remote = fromArm9 ? ipcSync7 : ipcSync9;
+        if ((remote & 0x4000) != 0) {
             iflags |= 1 << 16;
         }
     }
@@ -294,19 +306,42 @@ public final class NdsMachine {
         int[] queue = arm9 ? fifoIn9 : fifoIn7;
         int count = arm9 ? fifoIn9Count : fifoIn7Count;
         if (count == 0) {
-            return 0;
+            // Reading an empty queue returns the previously read word and latches the error bit.
+            if (arm9) {
+                fifoError9 = 0x4000;
+            } else {
+                fifoError7 = 0x4000;
+            }
+            return arm9 ? lastRecv9 : lastRecv7;
         }
         int value = queue[0];
         System.arraycopy(queue, 1, queue, 0, count - 1);
         if (arm9) {
             fifoIn9Count--;
+            lastRecv9 = value;
+            if ((fifoCnt7 & 0x0200) != 0) {
+                // the sender's "receive not empty" IRQ (it is not empty for the ARM9 to fill)
+                iflags |= 1 << 18;
+            }
         } else {
             fifoIn7Count--;
+            lastRecv7 = value;
+            if ((fifoCnt9 & 0x0200) != 0) {
+                iflags |= 1 << 18;
+            }
         }
         return value;
     }
 
     public void writeIpcSend(boolean arm9, int value) {
+        if (System.getenv("NDS_IPC") != null) {
+            System.err.println("FIFO send " + (arm9 ? "9" : "7") + " = " + Integer.toHexString(value)
+                    + " enabled=" + ((arm9 ? fifoCnt9 : fifoCnt7) & 0x8000));
+        }
+        boolean enabled = ((arm9 ? fifoCnt9 : fifoCnt7) & 0x8000) != 0;
+        if (!enabled) {
+            return;
+        }
         int[] queue = arm9 ? fifoIn7 : fifoIn9;
         int count = arm9 ? fifoIn7Count : fifoIn9Count;
         if (count >= queue.length) {
@@ -315,12 +350,14 @@ public final class NdsMachine {
         queue[count] = value;
         if (arm9) {
             fifoIn7Count++;
+            if ((fifoCnt7 & 0x0400) != 0) {
+                iflags |= 1 << 17;
+            }
         } else {
             fifoIn9Count++;
-        }
-        iflags |= 1 << 17;
-        if ((ipcFifoControl & 0x0400) != 0) {
-            iflags |= 1 << 18;
+            if ((fifoCnt9 & 0x0400) != 0) {
+                iflags |= 1 << 17;
+            }
         }
     }
 
@@ -355,7 +392,7 @@ public final class NdsMachine {
             case 0x130:
                 return readKeyInput(size, offset);
             case 0x180:
-                return readIpcSync(size, offset);
+                return readIpcSync(arm9, size, offset);
             case 0x184:
                 return readFifoControl(arm9, size, offset);
             case 0x208:
@@ -412,19 +449,24 @@ public final class NdsMachine {
         return read16Bit(keyInput, size, offset);
     }
 
-    private int readIpcSync(int size, int offset) {
-        return read16Bit(ipcSync, size, offset);
+    private int readIpcSync(boolean arm9, int size, int offset) {
+        // bits 0-3 are the data the *other* core sent, 8-11 are ours
+        int own = arm9 ? ipcSync9 : ipcSync7;
+        int other = arm9 ? ipcSync7 : ipcSync9;
+        int value = (own & 0x2F00) | ((other >> 8) & 0x000F) | (((other >> 14) & 1) << 14);
+        return read16Bit(value, size, offset);
     }
 
     private int readFifoControl(boolean arm9, int size, int offset) {
         // bit 0: our send FIFO is empty, bit 8: the receive FIFO is empty
         int outgoing = arm9 ? fifoIn7Count : fifoIn9Count;
         int incoming = arm9 ? fifoIn9Count : fifoIn7Count;
-        int value = ipcFifoControl & 0xF400;
+        int value = (arm9 ? fifoCnt9 : fifoCnt7) & 0xE400;
         value |= outgoing == 0 ? 0x0001 : 0;
         value |= outgoing >= 16 ? 0x0002 : 0;
         value |= incoming == 0 ? 0x0100 : 0;
         value |= incoming >= 16 ? 0x0200 : 0;
+        value |= arm9 ? fifoError9 : fifoError7;
         return read16Bit(value, size, offset);
     }
 
@@ -484,20 +526,38 @@ public final class NdsMachine {
                 setIo16(0x004, (io16(0x004) & 0x0007) | (value & 0xFFF8));
                 return;
             case 0x180:
-                ipcSync = value & 0xFFFF;
-                setIo16(0x180, ipcSync);
-                if ((ipcSync & 0x2000) != 0) {
-                    iflags |= 1 << 16;
+                if (System.getenv("NDS_IPC") != null) {
+                    System.err.println("IPCSYNC " + (arm9 ? "9" : "7") + " <- " + Integer.toHexString(value));
+                }
+                if (arm9) {
+                    ipcSync9 = value & 0xFFFF;
+                } else {
+                    ipcSync7 = value & 0xFFFF;
+                }
+                setIo16(0x180, value & 0xFFFF);
+                if ((value & 0x2000) != 0) {
+                    raiseIpcSyncIrq(arm9);
                 }
                 return;
             case 0x184:
-                ipcFifoControl = value & 0xFFFF;
-                setIo16(0x184, ipcFifoControl);
-                if ((value & 0x0008) != 0) {  // clear the send FIFO
+                if (arm9) {
+                    fifoCnt9 = value & 0xFFFF;
+                } else {
+                    fifoCnt7 = value & 0xFFFF;
+                }
+                setIo16(0x184, value & 0xFFFF);
+                if ((value & 0x0008) != 0) {  // clear our send FIFO
                     if (arm9) {
                         fifoIn7Count = 0;
                     } else {
                         fifoIn9Count = 0;
+                    }
+                }
+                if ((value & 0x4000) != 0) {  // acknowledge the error flag
+                    if (arm9) {
+                        fifoError9 = 0;
+                    } else {
+                        fifoError7 = 0;
                     }
                 }
                 return;
@@ -823,8 +883,14 @@ public final class NdsMachine {
         out.writeInt(ie7);
         out.writeInt(ime7);
         out.writeInt(keyInput);
-        out.writeInt(ipcSync);
-        out.writeInt(ipcFifoControl);
+        out.writeInt(ipcSync9);
+        out.writeInt(ipcSync7);
+        out.writeInt(fifoCnt9);
+        out.writeInt(fifoCnt7);
+        out.writeInt(fifoError9);
+        out.writeInt(fifoError7);
+        out.writeInt(lastRecv9);
+        out.writeInt(lastRecv7);
         out.writeInt(fifoIn9Count);
         out.writeInt(fifoIn7Count);
         for (int value : fifoIn9) {
@@ -860,8 +926,14 @@ public final class NdsMachine {
         ie7 = in.readInt();
         ime7 = in.readInt();
         keyInput = in.readInt();
-        ipcSync = in.readInt();
-        ipcFifoControl = in.readInt();
+        ipcSync9 = in.readInt();
+        ipcSync7 = in.readInt();
+        fifoCnt9 = in.readInt();
+        fifoCnt7 = in.readInt();
+        fifoError9 = in.readInt();
+        fifoError7 = in.readInt();
+        lastRecv9 = in.readInt();
+        lastRecv7 = in.readInt();
         fifoIn9Count = in.readInt();
         fifoIn7Count = in.readInt();
         for (int i = 0; i < fifoIn9.length; i++) {
