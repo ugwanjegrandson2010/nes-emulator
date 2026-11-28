@@ -302,9 +302,14 @@ final class GbaPpu {
             return;
         }
         if (mode == 5) {
+            int bitmapWidth = 160;
+            int bitmapHeight = 128;
+            if (y >= bitmapHeight) {
+                return;
+            }
             int page = (dispcnt & 0x10) != 0 ? 0xA000 : 0;
-            for (int x = 0; x < WIDTH; x++) {
-                int address = page + (y * WIDTH + x) * 2;
+            for (int x = 0; x < bitmapWidth; x++) {
+                int address = page + (y * bitmapWidth + x) * 2;
                 int color = (vram[address] & 0xFF) | ((vram[address + 1] & 0xFF) << 8);
                 line[x] = bgr555(color);
             }

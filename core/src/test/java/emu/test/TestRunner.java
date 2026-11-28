@@ -5,6 +5,7 @@ import emu.gb.GbCartridge;
 import emu.gb.GbCore;
 import emu.gb.GbMachine;
 import emu.gb.GbPpu;
+import emu.gba.GbaCore;
 import emu.nes.Apu;
 import emu.nes.Cartridge;
 import emu.nes.Cpu6502;
@@ -75,6 +76,7 @@ public final class TestRunner {
             }
         });
 
+        gbaMode5Pages();
         snesSaveStateRoundTrip();
 
         long millis = System.currentTimeMillis() - start;
@@ -817,6 +819,37 @@ public final class TestRunner {
         check("Game Boy save state round trip reproduces the exact machine state",
                 Arrays.equals(expected, replayed),
                 "state sizes " + expected.length + "/" + replayed.length);
+    }
+
+    private static byte[] gbaLoopRom() {
+        byte[] image = new byte[0xC0];
+        // ARM B . at the BIOS-free cartridge entry point.
+        image[0] = (byte) 0xFE;
+        image[1] = (byte) 0xFF;
+        image[2] = (byte) 0xFF;
+        image[3] = (byte) 0xEA;
+        return image;
+    }
+
+    private static void gbaMode5Pages() throws IOException {
+        GbaCore core = new GbaCore();
+        core.loadRom(gbaLoopRom());
+        int vram = 0x06000000;
+        int lastPixel = (160 * 128 - 1) * 2;
+        core.machine().write16(vram + lastPixel, 0x001F);
+        core.machine().write16(vram + 0xA000 + lastPixel, 0x03E0);
+        core.machine().write16(0x05000000, 0x7C00); // blue backdrop outside the bitmap
+        core.machine().write16(0x04000000, 0x0405);
+        core.stepFrame();
+        int lastScreenPixel = 127 * core.width() + 159;
+        check("GBA mode 5: first page uses a 160×128 bitmap",
+                core.framebuffer()[lastScreenPixel] == 0xFFF80000);
+        core.machine().write16(0x04000000, 0x0415);
+        core.stepFrame();
+        check("GBA mode 5: second page renders and leaves the backdrop outside the bitmap",
+                core.framebuffer()[lastScreenPixel] == 0xFF00F800
+                && core.framebuffer()[lastScreenPixel + 1] == 0xFF0000F8
+                && core.framebuffer()[128 * core.width()] == 0xFF0000F8);
     }
 
     private static void snesSaveStateRoundTrip() throws IOException {
