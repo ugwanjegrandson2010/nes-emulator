@@ -1,7 +1,8 @@
 # MilliEmu — a multi-system emulator for Android
 
 MilliEmu is an Android emulator **hub**: a shell that plays games through pluggable emulation
-cores, written in plain Java with no third-party code. It ships with five from-scratch cores:
+cores, written in plain Java with no third-party code. NES and Game Boy have the broadest
+test coverage; treat GBA, Nintendo DS, and SNES as experimental. MilliEmu has five cores:
 
 | Core | Systems | Files |
 | --- | --- | --- |
@@ -19,8 +20,11 @@ cores, written in plain Java with no third-party code. It ships with five from-s
 Download the signed APK from the [Releases page](https://github.com/ugwanjegrandson2010/nes-emulator/releases/latest) —
 `MilliEmu-1.3.apk`, ~190 KB, Android 5.0+ — copy it to your phone, tap it, allow
 "install unknown apps" for your file manager, and open it. No JDK, SDK, Gradle or Android Studio
-required. The APK is signed with the key committed in `keystore/`, so future releases install
-over it as updates.
+required.
+
+**Warning:** The `1.3` APK uses a public signing key committed in `keystore/`. A matching
+signature does not prove an APK came from this project. Use the linked release page, not a
+third-party mirror. Source fixes on `main` are not included in the `1.3` APK.
 
 ---
 
@@ -74,7 +78,7 @@ second and third.
 | Keypad input | Complete |
 | 2D engines (main + sub): text backgrounds 16/256 colour, affine backgrounds, OAM sprites (4/8bpp, flips, priority), 15-bit bitmap mode 5 | Complete |
 | BIOS calls used by homebrew: Div, CpuSet/CpuFastSet, BitUnPack, LZ77, Run-Length, Halt/VBlankIntrWait | Complete |
-| Save states | Full machine state, single slot per game |
+| Save states | Single slot per game; not all hardware state is saved |
 | 3D engine, sound hardware, commercial KEY1-encrypted ROMs, ARM7 firmware images | **Not implemented** (see limitations) |
 
 
@@ -88,7 +92,7 @@ second and third.
 | DMA: all four channels, immediate and HBlank/VBlank start, ROM → VRAM copies | Complete |
 | Timers, keypad IRQ, VBlank/HBlank/VCount IRQs, IME/IE/IF | Complete |
 | BIOS calls: Div, DivArm, Sqrt, ArcTan/ArcTan2, CpuSet, CpuFastSet, BgAffineSet, ObjAffineSet, BitUnPack, LZ77, Run-Length, Halt, IntrWait | Complete |
-| Save states | Full machine state, single slot per game |
+| Save states | Single slot per game; not all hardware state is saved |
 | Sound (4 PSG channels + DMA sound) | **Silent** (see limitations) |
 
 The ARM core itself is exercised by `jsmolka/gba-tests`: `arm.gba` runs through the conditions,
@@ -104,7 +108,7 @@ through the GBA PPU; `shades.gba` renders its gradient through bitmap mode 3.
 | PPU: background modes 0-7 (2/4/8 bpp, per-tile priority, flips, 32x32-64x64 maps), 128 sprites, 15-bit colour, brightness/fade, Mode 7 affine | Complete |
 | DMA: all 8 channels and the 8 HDMA channels (table-driven per-scanline register writes) | Complete |
 | NMI/VBlank, VCount IRQ, joypad auto-read, timers | Complete |
-| Save states | Full machine state, single slot per game |
+| Save states | Single slot per game; not all hardware state is saved |
 | S-SMP audio CPU, windows, colour maths, interlace | **Not implemented** (see limitations) |
 
 The core is verified with a hand-written test ROM built into a script (`tools/make-snes-test.py` is
@@ -172,23 +176,21 @@ next to the app's private data.
 
 ## Run the verification suite
 
-No test framework, no network — one `javac` and one `java`:
+Run these commands from the repository root with JDK 17 on your `PATH`. The tests don't need
+an Android SDK, network access, or a test framework:
 
 ```bash
-export PATH=/path/to/jdk-17/bin:$PATH
 mkdir -p build/classes build/test-classes
-javac -encoding UTF-8 -d build/classes $(find core/src/main/java -name '*.java')
-javac -encoding UTF-8 -cp build/classes -d build/test-classes $(find core/src/test/java -name '*.java')
+javac --release 8 -encoding UTF-8 -d build/classes \
+  $(find core/src/main/java -name '*.java')
+javac --release 8 -encoding UTF-8 -cp build/classes -d build/test-classes \
+  $(find core/src/test/java -name '*.java')
 java -cp build/classes:build/test-classes emu.test.TestRunner
 ```
 
-Result on this machine:
+A successful run reports `0 failed`. The suite covers these systems:
 
-```
-74 passed, 0 failed  (4.7 s)
-```
-
-**NES (29 checks)**
+**NES**
 
 - **Klaus Dormann's 6502 functional test** — every official opcode, all addressing modes,
   all flags including decimal mode, run to its success trap.
@@ -197,7 +199,7 @@ Result on this machine:
 - **blargg's instr_test-v5** — all 16 sub-tests, end to end through CPU + PPU + cartridge.
 - **PPU rendering**, **mappers**, **APU** and a byte-identical **save-state** round trip.
 
-**Game Boy (9 checks)**
+**Game Boy**
 
 - **cpu_instrs** — all 11 sub-tests, each verified by comparing the rendered result screen to a
   verified reference frame (they all print `Passed`).
@@ -205,9 +207,11 @@ Result on this machine:
 - **halt_bug** — the HALT bug (pending interrupt with `IME=0` repeats the next byte).
 - **dmg-acid2** — Matt Currie's PPU conformance test, compared pixel-for-pixel against the
   official reference image: **23040/23040 pixels identical**.
-- **MBC1 banking**, **APU output** and a byte-identical **save-state** round trip.
+- **MBC1 banking**, **APU output**, and a byte-identical **save-state** round trip.
+- **LCD off/on** — the frame loop returns while the screen is off and resumes VBlank interrupts
+  when the screen turns back on.
 
-**Nintendo DS (26 checks)**
+**Nintendo DS and shared ARM CPU**
 
 There is no public conformance suite for the DS in the shape of `nestest`, so the DS checks run
 hand-assembled ARM and Thumb programs through the real decoder and assert their results, then boot
@@ -217,7 +221,8 @@ cartridge loader, memory map and both picture engines:
 - **ARM decoding**: data processing, all shifts, every flag (carry, zero, signed overflow),
   conditional execution, MUL/MLA/UMULL, word/byte/halfword loads and stores with writeback,
   LDM/STM, block-transfer writeback, MRS/MSR, BX, SWI dispatch, IRQ entry *and* exception return.
-- **Thumb decoding**: MOV/CMP/ADD/SUB immediate, LSL, conditional branches, BL, BX LR.
+- **Thumb decoding**: MOV/CMP/ADD/SUB immediate, LSL, conditional branches, BL, BX LR, and
+  stack-relative word transfers on ARM7 and ARM9.
 - **Machine level**: cartridge header parsing, refusal of encrypted retail images, private
   ARM9 DTCM vs shared main RAM, text background rendering through palette + tile map +
   `DISPCNT`, the sub engine on the second screen, OAM sprites, mode 5 direct colour, the
@@ -227,6 +232,16 @@ A third-party ROM is not committed, but the core boots **Rockwrestler**, a publi
 it loads, runs its ARM9/ARM7 initialisation (stack setup, CP15, TCM, IPC reset), executes its
 CPU test suite for hundreds of millions of instructions and idles in its per-frame loop. It does
 not yet finish that ROM's full suite — see the limitations.
+
+**Game Boy Advance and Super Nintendo**
+
+- **GBA mode 5** — both framebuffer pages render at 160×128 pixels, leaving the backdrop outside
+  the bitmap.
+- **GBA save states** — restore cartridge SRAM into a fresh core and rewind changes in the same
+  core. Older states still load but leave SRAM unchanged because they don't contain it.
+- **SNES save states** — restore work RAM, cartridge SRAM, and CPU registers into a fresh core.
+
+These are targeted regression checks, not game-compatibility tests.
 
 Headless tools in `tools/` render frames to PNG without a phone:
 
@@ -368,10 +383,8 @@ the NES, 10:9 for the Game Boy).
 **App**
 
 - **One save-state slot per game**, no rewind, no netplay, no turbo.
-- **The APK was built and inspected, but not launched on hardware in this environment**: the
-  sandbox has no access to `/dev/kvm` and no USB device, so the Android UI itself is unverified.
-  Everything below the UI (both cores, the exact code path the app calls) is verified by the
-  suite above and by the rendered frames in `artifacts/`.
+- The JVM suite exercises the emulator cores, not Android import, playback, or lifecycle
+  behavior. The rendered frames in `artifacts/` are headless examples.
 
 ## Test material
 
