@@ -13,6 +13,7 @@ import emu.nes.Mappers;
 import emu.nes.NesCore;
 import emu.nes.NesMachine;
 import emu.nes.Ppu;
+import emu.snes.SnesCore;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -72,6 +73,8 @@ public final class TestRunner {
                 TestRunner.check(name, ok, detail);
             }
         });
+
+        snesSaveStateRoundTrip();
 
         long millis = System.currentTimeMillis() - start;
         System.out.println();
@@ -785,6 +788,27 @@ public final class TestRunner {
         check("Game Boy save state round trip reproduces the exact machine state",
                 Arrays.equals(expected, replayed),
                 "state sizes " + expected.length + "/" + replayed.length);
+    }
+
+    private static void snesSaveStateRoundTrip() throws IOException {
+        byte[] rom = new byte[0x8000];
+        rom[0x7FFC] = 0x00;
+        rom[0x7FFD] = (byte) 0x80;
+        SnesCore original = new SnesCore();
+        original.loadRom(rom);
+        original.machine().write(0x006000, 0x5A);
+        original.machine().write(0x7E0000, 0xA5);
+        original.machine().cpu().a = 0x1234;
+        byte[] state = original.saveState();
+
+        SnesCore restored = new SnesCore();
+        restored.loadRom(rom);
+        restored.loadState(state);
+        check("SNES state restores SRAM, WRAM and CPU registers into a fresh core",
+                restored.machine().read(0x006000) == 0x5A
+                && restored.machine().read(0x7E0000) == 0xA5
+                && restored.machine().cpu().a == 0x1234
+                && Arrays.equals(state, restored.saveState()));
     }
 
     private static void saveStateRoundTrip() throws Exception {

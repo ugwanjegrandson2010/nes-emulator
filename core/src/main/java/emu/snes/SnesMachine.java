@@ -767,6 +767,9 @@ public final class SnesMachine implements SnesCpu.Bus {
             throw new IOException("save state does not match this machine");
         }
         in.readFully(ram);
+        if (in.readInt() != sram.length) {
+            throw new IOException("save state has an invalid SRAM size");
+        }
         in.readFully(sram);
         in.readFully(ppu.vram);
         for (int i = 0; i < 256; i++) {
@@ -774,7 +777,10 @@ public final class SnesMachine implements SnesCpu.Bus {
         }
         in.readFully(ppu.oam);
         int regCount = in.readInt();
-        for (int i = 0; i < Math.min(regCount, regs.length); i++) {
+        if (regCount != regs.length) {
+            throw new IOException("save state has an invalid register count");
+        }
+        for (int i = 0; i < regs.length; i++) {
             regs[i] = in.readInt();
         }
         cpu.a = in.readInt();
