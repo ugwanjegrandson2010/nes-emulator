@@ -1262,13 +1262,13 @@ public final class NdsCpu {
 
     private int thumbSpRelative(int insn) {
         int rd = (insn >>> 8) & 7;
-        int offset = (insn & 0xFF) << 2;
+        int address = (r[13] + ((insn & 0xFF) << 2)) & ~3;
         if ((insn & (1 << 11)) != 0) {
-            r[rd] = bus.read32((r[13] + offset) & ~3);
+            r[rd] = bus.read32(address);
             return 3;
         }
-        r[rd] = r[13] + offset;
-        return 1;
+        bus.write32(address, r[rd]);
+        return 2;
     }
 
     private void thumbLoadAddress(int insn) {

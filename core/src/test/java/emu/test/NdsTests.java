@@ -34,6 +34,8 @@ public final class NdsTests {
         armLoadStore(reporter);
         armBlockTransfer(reporter);
         thumbInstructions(reporter);
+        thumbSpRelative(reporter, false);
+        thumbSpRelative(reporter, true);
         armSoftwareInterrupt(reporter);
         armInterruptDispatch(reporter);
         dsCartridgeHeader(reporter);
@@ -551,6 +553,21 @@ public final class NdsTests {
         check(reporter, "DS Thumb: conditional branch", cpu.r[7] == 1, "r7=" + cpu.r[7]);
         check(reporter, "DS Thumb: BL and BX LR", cpu.r[2] == 7 && cpu.thumb(),
                 "r2=" + cpu.r[2] + " pc=" + Integer.toHexString(cpu.r[15]));
+    }
+
+    private static void thumbSpRelative(Reporter reporter, boolean arm9) {
+        TestBus bus = new TestBus();
+        bus.emitHalf(0x300, 0x9003, 0x9903); // STR r0,[sp,#12]; LDR r1,[sp,#12]
+        NdsCpu cpu = new NdsCpu(bus, arm9);
+        cpu.reset(0x300);
+        cpu.writeCpsr(cpu.cpsr | NdsCpu.FLAG_T);
+        cpu.r[0] = 0x12345678;
+        cpu.r[13] = 0x800;
+        run(cpu, 2);
+        check(reporter, (arm9 ? "ARM9" : "ARM7") + " Thumb: SP-relative word store and load",
+                bus.read32(0x80C) == 0x12345678 && cpu.r[0] == 0x12345678
+                && cpu.r[1] == 0x12345678 && cpu.r[13] == 0x800,
+                "stored=" + Integer.toHexString(bus.read32(0x80C)));
     }
 
     private static void armSoftwareInterrupt(Reporter reporter) {
