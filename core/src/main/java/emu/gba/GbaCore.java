@@ -23,7 +23,9 @@ public final class GbaCore implements EmulatorCore {
     public static final int BUTTON_L = 0x100;
     public static final int BUTTON_R = 0x200;
 
-    private static final byte[] MAGIC = {'G', 'B', 'A', '0'};
+    private static final byte[] MAGIC = {'G', 'B', 'A'};
+    private static final int LEGACY_STATE = '0';
+    private static final int STATE_WITH_SRAM = '1';
 
     private GbaMachine machine = new GbaMachine();
 
@@ -99,6 +101,7 @@ public final class GbaCore implements EmulatorCore {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream(512 * 1024);
             DataOutputStream out = new DataOutputStream(buffer);
             out.write(MAGIC);
+            out.writeByte(STATE_WITH_SRAM);
             machine.saveState(out);
             out.flush();
             return buffer.toByteArray();
@@ -117,9 +120,14 @@ public final class GbaCore implements EmulatorCore {
                 throw new IOException("this save state belongs to another core");
             }
         }
-        DataInputStream in = new DataInputStream(new ByteArrayInputStream(state, MAGIC.length,
-                state.length - MAGIC.length));
-        machine.loadState(in);
+        int version = state[MAGIC.length];
+        if (version != LEGACY_STATE && version != STATE_WITH_SRAM) {
+            throw new IOException("unsupported GBA save state version");
+        }
+        int headerSize = MAGIC.length + 1;
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(state, headerSize,
+                state.length - headerSize));
+        machine.loadState(in, version == STATE_WITH_SRAM);
     }
 
     /** Exposed for the headless test/dump tools. */

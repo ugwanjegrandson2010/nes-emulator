@@ -1065,9 +1065,10 @@ public final class GbaMachine implements NdsCpu.Bus {
         out.writeInt(frameCount);
         out.writeInt(haltedUntilIrq);
         ppu.saveState(out);
+        out.write(sram);
     }
 
-    void loadState(DataInputStream in) throws IOException {
+    void loadState(DataInputStream in, boolean hasSram) throws IOException {
         cpu.loadState(in);
         in.readFully(ewram);
         in.readFully(iwram);
@@ -1091,6 +1092,9 @@ public final class GbaMachine implements NdsCpu.Bus {
         frameCount = in.readInt();
         haltedUntilIrq = in.readInt();
         ppu.loadState(in);
+        if (hasSram) {
+            in.readFully(sram);
+        }
     }
 
     int[] framebuffer() {

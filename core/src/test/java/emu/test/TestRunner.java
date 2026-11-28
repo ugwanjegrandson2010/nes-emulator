@@ -77,6 +77,7 @@ public final class TestRunner {
         });
 
         gbaMode5Pages();
+        gbaSaveStateRoundTrip();
         snesSaveStateRoundTrip();
 
         long millis = System.currentTimeMillis() - start;
@@ -850,6 +851,35 @@ public final class TestRunner {
                 core.framebuffer()[lastScreenPixel] == 0xFF00F800
                 && core.framebuffer()[lastScreenPixel + 1] == 0xFF0000F8
                 && core.framebuffer()[128 * core.width()] == 0xFF0000F8);
+    }
+
+    private static void gbaSaveStateRoundTrip() throws IOException {
+        byte[] rom = gbaLoopRom();
+        int saveAddress = 0x0E008040;
+        GbaCore original = new GbaCore();
+        original.loadRom(rom);
+        original.machine().write8(saveAddress, 0x5A);
+        original.machine().write8(0x02000000, 0x3C);
+        byte[] state = original.saveState();
+
+        GbaCore restored = new GbaCore();
+        restored.loadRom(rom);
+        restored.loadState(state);
+        check("GBA state restores cartridge SRAM into a fresh core",
+                restored.machine().read8(saveAddress) == 0x5A && Arrays.equals(state, restored.saveState()));
+        restored.machine().write8(saveAddress, 0xA5);
+        restored.loadState(state);
+        check("GBA state rewinds changed cartridge SRAM",
+                restored.machine().read8(saveAddress) == 0x5A);
+
+        // Version 0 has the same machine payload, without the final 64 KiB of SRAM.
+        byte[] legacy = Arrays.copyOf(state, state.length - 0x10000);
+        legacy[3] = '0';
+        restored.machine().write8(saveAddress, 0xA5);
+        restored.machine().write8(0x02000000, 0);
+        restored.loadState(legacy);
+        check("GBA legacy state restores work RAM without overwriting cartridge SRAM",
+                restored.machine().read8(0x02000000) == 0x3C && restored.machine().read8(saveAddress) == 0xA5);
     }
 
     private static void snesSaveStateRoundTrip() throws IOException {
