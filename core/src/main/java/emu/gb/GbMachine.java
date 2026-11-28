@@ -36,6 +36,7 @@ public final class GbMachine {
     private int joypadLines = 0x0F;
 
     private long frameCount;
+    private int frameCycles;
 
     public GbMachine(GbCartridge cart) {
         this.cart = cart;
@@ -71,17 +72,16 @@ public final class GbMachine {
         return frameCount;
     }
 
-    /** Runs instructions until the picture unit has produced one full frame. */
+    /** Runs to VBlank, or yields after a frame's worth of clocks if no picture is ready. */
     public void stepFrame() {
         ppu.frameReady = false;
-        long start = frameCount;
-        int guard = 0;
-        while (!ppu.frameReady) {
+        frameCycles = 0;
+        int frameBudget = GbPpu.DOTS_PER_LINE * GbPpu.LINES;
+        while (!ppu.frameReady && frameCycles < frameBudget) {
             cpu.step();
-            if ((++guard & 0xFFFF) == 0 && frameCount == start) {
-                // safety valve: a ROM stuck in a loop with the LCD held off still yields frames
-                tick(4);
-            }
+        }
+        if (!ppu.isLcdOn()) {
+            java.util.Arrays.fill(ppu.framebuffer, GbPpu.rgbFor(0));
         }
         frameCount++;
     }
@@ -91,6 +91,7 @@ public final class GbMachine {
     }
 
     void tick(int cycles) {
+        frameCycles += cycles;
         timerTick(cycles);
         apu.tick(cycles);
         for (int i = 0; i < cycles; i++) {

@@ -63,6 +63,7 @@ public final class TestRunner {
         gbInstructionTiming();
         gbHaltBug();
         gbPictureUnit();
+        gbLcdOffYields();
         gbMappers();
         gbApuOutput();
         gbSaveStateRoundTrip();
@@ -718,6 +719,34 @@ public final class TestRunner {
         int diffs = compareScreen(screen, "dmg-acid2.png", true);
         check("Game Boy PPU: dmg-acid2 matches the official reference image (" + (160 * 144 - diffs) + "/23040 px)",
                 diffs == 0, diffs + " pixels differ");
+    }
+
+    private static void gbLcdOffYields() throws Exception {
+        // Keep the fixture's header, but boot our own short program after it.
+        byte[] image = rom("gb/01-special.gb");
+        byte[] jump = {(byte) 0xC3, 0x50, 0x01};                 // JP $0150
+        byte[] program = {(byte) 0xF3, (byte) 0xAF,             // DI; XOR A
+                (byte) 0xE0, 0x40, 0x18, (byte) 0xFE};         // LDH ($40), A; JR -2
+        System.arraycopy(jump, 0, image, 0x100, jump.length);
+        System.arraycopy(program, 0, image, 0x150, program.length);
+        GbMachine machine = new GbMachine(GbCartridge.load(image));
+        machine.write(0xFF0F, 0);
+        Thread frame = new Thread(machine::stepFrame, "gb-lcd-off-test");
+        frame.setDaemon(true);
+        frame.start();
+        frame.join(2000);
+        if (frame.isAlive()) {
+            check("Game Boy LCD off: frame yields without a VBlank interrupt", false,
+                    "stepFrame did not return");
+            return;
+        }
+        check("Game Boy LCD off: frame yields without a VBlank interrupt",
+                machine.frameCount() == 1 && (machine.read(0xFF0F) & GbMachine.INT_VBLANK) == 0
+                && machine.ppu.framebuffer[0] == GbPpu.rgbFor(0));
+        machine.write(0xFF40, 0x91);
+        machine.stepFrame();
+        check("Game Boy LCD on: VBlank resumes after re-enabling the display",
+                (machine.read(0xFF0F) & GbMachine.INT_VBLANK) != 0);
     }
 
     private static void gbMappers() throws IOException {
